@@ -68,3 +68,12 @@ Watching for file changes with StatReloader
 Watching for file changes with StatReloader
 Not Found: /api/persons/search/
 Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+Not Found: /favicon.ico
+Not Found: /api/persons/create/
+C:\biba\groups_management\apps\persons\urls.py changed, reloading.
+Watching for file changes with StatReloader
+Watching for file changes with StatReloader
+Bad Request: /api/persons/create/
+Bad Request: /api/persons/create/

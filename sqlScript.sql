@@ -92,10 +92,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_assign_person_group
-BEFORE INSERT ON person
-FOR EACH ROW
-EXECUTE FUNCTION assign_person_group();
+-- CREATE TRIGGER trg_assign_person_group
+-- BEFORE INSERT ON person
+-- FOR EACH ROW
+-- EXECUTE FUNCTION assign_person_group();
 
 INSERT INTO person (last_name, first_name, middle_name, birth_date, gender, address, phone, email)
 VALUES ('Иванов', 'Иван', 'Петрович', '1990-01-01', 'М', 'Москва', '+7(999)123-45-67', 'ivan@mail.ru');
@@ -166,9 +166,9 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER t_no_update_person
-  BEFORE UPDATE OR DELETE ON person
-  FOR EACH STATEMENT EXECUTE FUNCTION forbid_direct_write();
+-- CREATE TRIGGER t_no_update_person
+--   BEFORE UPDATE OR DELETE ON person
+--   FOR EACH STATEMENT EXECUTE FUNCTION forbid_direct_write();
 
 --Функция и триггер на персистентность
 CREATE OR REPLACE FUNCTION version_person_after_insert()
@@ -207,10 +207,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_version_person_after_insert
-AFTER INSERT ON person
-FOR EACH ROW
-EXECUTE FUNCTION version_person_after_insert();
+-- CREATE TRIGGER trg_version_person_after_insert
+-- AFTER INSERT ON person
+-- FOR EACH ROW
+-- EXECUTE FUNCTION version_person_after_insert();
 
 --Чтение на момент времени T
 CREATE OR REPLACE FUNCTION person_as_of(p_group_id INT, t TIMESTAMPTZ)
@@ -446,3 +446,16 @@ SELECT * FROM person_vitrine_search(p_email=>'anna@gmail.com');
 -- Если что-то пошло не так, это сотрёт все данные
 TRUNCATE TABLE person_history, person, person_group, change_set
 RESTART IDENTITY CASCADE;
+
+-- дедупликация
+DROP TRIGGER IF EXISTS trg_assign_person_group ON person;
+DROP FUNCTION IF EXISTS assign_person_group();
+DROP FUNCTION IF EXISTS find_matching_group(varchar, varchar, varchar, char, text, varchar, varchar);
+
+-- персистентность
+DROP TRIGGER IF EXISTS trg_version_person_after_insert ON person;
+DROP FUNCTION IF EXISTS version_person_after_insert();
+
+-- запрет прямых обновлений (мешает бэкенду)
+DROP TRIGGER IF EXISTS t_no_update_person ON person;
+DROP FUNCTION IF EXISTS forbid_direct_write();

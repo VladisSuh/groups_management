@@ -1,4 +1,5 @@
 from django.db import connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 from .models import Person, PersonGroup, ChangeSet, PersonHistory
 from typing import Optional, List, Dict, Any
@@ -14,21 +15,46 @@ class PersonService:
 
     @staticmethod
     def find_matching_group(person_data: Dict[str, Any]) -> Optional[int]:
-        """Поиск подходящей группы для человека"""
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT find_matching_group(%s, %s, %s, %s, %s, %s, %s)
-            """, [
-                person_data['last_name'],
-                person_data['first_name'],
-                person_data.get('middle_name'),
-                person_data['gender'],
-                person_data['address'],
-                person_data.get('phone'),
-                person_data.get('email')
-            ])
-            result = cursor.fetchone()
-            return result[0] if result and result[0] else None
+        """Поиск подходящей группы для человека (бэкенд-реализация без SQL-функций).
+
+        Условия (все должны выполняться):
+        - Совпадение пола
+        - Полное совпадение имён
+        - Полное совпадение отчеств (оба NULL или равны)
+        - Для мужчин — полное совпадение фамилий
+        - Совпадение хотя бы одного контакта: address ИЛИ phone (если указан) ИЛИ email (если указан)
+        Смотрим только по текущим записям.
+        """
+        qs = Person.objects.filter(
+            is_current=True,
+            gender=person_data['gender'],
+            first_name=person_data['first_name'],
+        )
+
+        middle_name = person_data.get('middle_name')
+        if middle_name is None:
+            qs = qs.filter(middle_name__isnull=True)
+        else:
+            qs = qs.filter(middle_name=middle_name)
+
+        if person_data['gender'] == 'М':
+            qs = qs.filter(last_name=person_data['last_name'])
+
+        contact_q = Q(address=person_data['address'])
+        phone = person_data.get('phone')
+        email = person_data.get('email')
+        if phone:
+            contact_q |= Q(phone=phone)
+        if email:
+            contact_q |= Q(email=email)
+
+        group_id = (
+            qs.filter(contact_q)
+              .order_by('group_id')
+              .values_list('group_id', flat=True)
+              .first()
+        )
+        return int(group_id) if group_id is not None else None
 
     @staticmethod
     @transaction.atomic
@@ -40,69 +66,134 @@ class PersonService:
                 reason='API person creation'
             )
 
-        # Поиск группы
+        # Поиск группы бэкендом
         group_id = PersonService.find_matching_group(person_data)
-        
         if group_id:
             group = PersonGroup.objects.get(id=group_id)
         else:
             group = PersonGroup.objects.create()
 
-        # Создание записи
+        # Создание новой «текущей» версии человека
+        now_ts = timezone.now()
         person = Person.objects.create(
             group=group,
             change=change_set,
+            created_at=now_ts,
+            is_current=True,
             **person_data
         )
+
+        # Персистентность: закрыть предыдущую «текущую» запись в истории, если была
+        prev = (
+            Person.objects
+            .filter(group=group, is_current=True)
+            .exclude(id=person.id)
+            .order_by('-created_at')
+            .first()
+        )
+        if prev:
+            PersonHistory.objects.create(
+                group=group,
+                change=person.change or prev.change,
+                last_name=prev.last_name,
+                first_name=prev.first_name,
+                middle_name=prev.middle_name,
+                birth_date=prev.birth_date,
+                gender=prev.gender,
+                address=prev.address,
+                phone=prev.phone,
+                email=prev.email,
+                valid_from=prev.created_at,
+                valid_to=now_ts,
+            )
+
+            # помечаем прошлую запись как неактуальную
+            prev.is_current = False
+            prev.save(update_fields=['is_current'])
 
         return person
 
     @staticmethod
     def search_persons_vitrine(search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Поиск в витрине"""
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT * FROM person_vitrine_search(
-                    p_last_name := %s,
-                    p_first_name := %s, 
-                    p_middle_name := %s,
-                    p_address := %s,
-                    p_phone := %s,
-                    p_email := %s,
-                    p_limit := %s,
-                    p_offset := %s
-                )
-            """, [
-                search_params.get('last_name'),
-                search_params.get('first_name'),
-                search_params.get('middle_name'),
-                search_params.get('address'),
-                search_params.get('phone'),
-                search_params.get('email'),
-                search_params.get('limit', 100),
-                search_params.get('offset', 0)
-            ])
-            
-            columns = [col[0] for col in cursor.description]
-            results = []
-            for row in cursor.fetchall():
-                results.append(dict(zip(columns, row)))
-            
-            return results
+        """Поиск в витрине (ORM, текущее состояние person)"""
+        qs = Person.objects.filter(is_current=True)
+
+        if search_params.get('last_name'):
+            qs = qs.filter(last_name=search_params['last_name'])
+        if search_params.get('first_name'):
+            qs = qs.filter(first_name=search_params['first_name'])
+        if search_params.get('middle_name') is not None and search_params.get('middle_name') != '':
+            qs = qs.filter(middle_name=search_params['middle_name'])
+        if search_params.get('address'):
+            qs = qs.filter(address=search_params['address'])
+        if search_params.get('phone'):
+            qs = qs.filter(phone=search_params['phone'])
+        if search_params.get('email'):
+            qs = qs.filter(email=search_params['email'])
+
+        limit = search_params.get('limit', 100)
+        offset = search_params.get('offset', 0)
+
+        qs = qs.order_by('group_id')[offset:offset + limit]
+
+        return [
+            {
+                'group_id': p.group_id,
+                'last_name': p.last_name,
+                'first_name': p.first_name,
+                'middle_name': p.middle_name,
+                'birth_date': p.birth_date,
+                'gender': p.gender,
+                'address': p.address,
+                'phone': p.phone,
+                'email': p.email,
+            }
+            for p in qs
+        ]
 
     @staticmethod
     def get_person_as_of(group_id: int, timestamp: timezone.datetime) -> Optional[Dict[str, Any]]:
-        """Получение состояния человека на определенный момент времени"""
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT * FROM person_as_of(%s, %s)
-            """, [group_id, timestamp])
-            
-            result = cursor.fetchone()
-            if result:
-                columns = [col[0] for col in cursor.description]
-                return dict(zip(columns, result))
-            return None
+        """Получение состояния человека на момент времени (ORM)."""
+        # 1) пробуем взять текущую запись, созданную не позже timestamp
+        current = (
+            Person.objects
+            .filter(group_id=group_id, is_current=True, created_at__lte=timestamp)
+            .order_by('-created_at')
+            .first()
+        )
+        if current:
+            return {
+                'group_id': current.group_id,
+                'last_name': current.last_name,
+                'first_name': current.first_name,
+                'middle_name': current.middle_name,
+                'birth_date': current.birth_date,
+                'gender': current.gender,
+                'address': current.address,
+                'phone': current.phone,
+                'email': current.email,
+            }
+
+        # 2) иначе ищем историческую запись, перекрывающую момент времени
+        hist = (
+            PersonHistory.objects
+            .filter(group_id=group_id, valid_from__lte=timestamp, valid_to__gt=timestamp)
+            .order_by('-valid_from')
+            .first()
+        )
+        if hist:
+            return {
+                'group_id': hist.group_id,
+                'last_name': hist.last_name,
+                'first_name': hist.first_name,
+                'middle_name': hist.middle_name,
+                'birth_date': hist.birth_date,
+                'gender': hist.gender,
+                'address': hist.address,
+                'phone': hist.phone,
+                'email': hist.email,
+            }
+        return None
 
     @staticmethod
     def get_all_current_persons() -> List[Person]:
