@@ -58,10 +58,12 @@ def api_create_person(request):
     if serializer.is_valid():
         try:
             person = PersonService.create_person(serializer.validated_data)
-            response_serializer = PersonSerializer(person)
             return Response({
                 'success': True,
-                'data': response_serializer.data
+                'message': 'Человек успешно добавлен',
+                'person_id': person.id,
+                'group_id': person.group.id if person.group else None,
+                'data': PersonSerializer(person).data
             }, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({
