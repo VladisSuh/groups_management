@@ -115,25 +115,53 @@ class PersonService:
 
     @staticmethod
     def search_persons_vitrine(search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Поиск в витрине (ORM, текущее состояние person)"""
+        """Поиск в витрине с частичным совпадением (дедублицированная информация)"""
         qs = Person.objects.filter(is_current=True)
 
+        # Поиск по частичным данным:
+        # i. фамилия
         if search_params.get('last_name'):
-            qs = qs.filter(last_name=search_params['last_name'])
+            qs = qs.filter(last_name__icontains=search_params['last_name'])
+        
+        # ii. фамилия и имя (если указаны оба)
         if search_params.get('first_name'):
-            qs = qs.filter(first_name=search_params['first_name'])
+            qs = qs.filter(first_name__icontains=search_params['first_name'])
+        
+        # iii. ФИО (отчество, если указано)
         if search_params.get('middle_name') is not None and search_params.get('middle_name') != '':
-            qs = qs.filter(middle_name=search_params['middle_name'])
+            qs = qs.filter(middle_name__icontains=search_params['middle_name'])
+        
+        # iv. адрес
         if search_params.get('address'):
-            qs = qs.filter(address=search_params['address'])
+            qs = qs.filter(address__icontains=search_params['address'])
+        
+        # v. номер телефона (точное совпадение, так как формат стандартизирован)
         if search_params.get('phone'):
-            qs = qs.filter(phone=search_params['phone'])
+            # Нормализуем введенный телефон для поиска
+            search_phone = search_params['phone']
+            if search_phone:
+                # Убираем все символы кроме цифр
+                import re
+                digits_only = re.sub(r'[^\d]', '', search_phone.strip())
+                
+                if digits_only.startswith('8') and len(digits_only) == 11:
+                    digits_only = '7' + digits_only[1:]
+                
+                if len(digits_only) == 11 and digits_only.startswith('7'):
+                    formatted_phone = f"+7({digits_only[1:4]}){digits_only[4:7]}-{digits_only[7:9]}-{digits_only[9:11]}"
+                    qs = qs.filter(phone=formatted_phone)
+                else:
+                    # Если не удалось нормализовать, ищем как есть
+                    qs = qs.filter(phone__icontains=search_phone)
+        
+        # vi. адрес электронной почты
         if search_params.get('email'):
-            qs = qs.filter(email=search_params['email'])
+            qs = qs.filter(email__icontains=search_params['email'])
 
         limit = search_params.get('limit', 100)
         offset = search_params.get('offset', 0)
 
+        # Дедубликация: группируем по group_id и берем одну запись на группу
         qs = qs.order_by('group_id')[offset:offset + limit]
 
         return [

@@ -169,7 +169,7 @@ def index_view(request):
 
 
 def list_persons_view(request):
-    """Страница со списком людей"""
+    """Страница со списком людей и поиском в витрине"""
     try:
         persons = PersonService.get_all_current_persons()
         return render(request, 'persons/list_persons.html', {'persons': persons})

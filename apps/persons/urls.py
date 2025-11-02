@@ -5,7 +5,7 @@ urlpatterns = [
     # Веб-страницы
     path('', views.index_view, name='index'),
     path('create/', views.PersonCreateView.as_view(), name='create_person'),
-    path('list/', views.list_persons_view, name='list_persons'),
+    path('list/', views.list_persons_view, name='list_persons'),  # Совмещенная страница списка и поиска
     
     # API endpoints
     path('api/persons/', views.api_create_person, name='api_create_person'),

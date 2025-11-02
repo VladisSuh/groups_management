@@ -18,30 +18,40 @@
         </div>
 
         <div class="row mt-4">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card">
                     <div class="card-body">
-                        <h5 class="card-title">Добавить человека</h5>
+                        <h5 class="card-title">🔍 Витрина поиска</h5>
+                        <p class="card-text">Поиск с дедубликацией по частичным данным</p>
+                        <a href="/list/" class="btn btn-success">Витрина</a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-3">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">➕ Добавить человека</h5>
                         <p class="card-text">Создать новую запись с автоматической дедубликацией</p>
                         <a href="/create/" class="btn btn-primary">Добавить</a>
                     </div>
                 </div>
             </div>
             
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card">
                     <div class="card-body">
-                        <h5 class="card-title">Список людей</h5>
+                        <h5 class="card-title">📋 Список людей</h5>
                         <p class="card-text">Просмотр всех текущих записей в системе</p>
                         <a href="/list/" class="btn btn-secondary">Просмотреть</a>
                     </div>
                 </div>
             </div>
             
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <div class="card">
                     <div class="card-body">
-                        <h5 class="card-title">API документация</h5>
+                        <h5 class="card-title">📖 API документация</h5>
                         <p class="card-text">REST API endpoints для интеграции</p>
                         <button class="btn btn-info" onclick="showApiDocs()">Показать</button>
                     </div>
@@ -50,7 +60,7 @@
         </div>
 
         <div id="api-docs" class="mt-4" style="display: none;">
-            <h3>API Endpoints:</h3>
+            <h3>API Endpoints для витрины:</h3>
             <div class="table-responsive">
                 <table class="table table-striped">
                     <thead>
@@ -58,31 +68,63 @@
                             <th>Метод</th>
                             <th>URL</th>
                             <th>Описание</th>
+                            <th>Параметры</th>
                         </tr>
                     </thead>
                     <tbody>
                         <tr>
-                            <td>POST</td>
-                            <td>/api/persons/</td>
-                            <td>Создание нового человека</td>
-                        </tr>
-                        <tr>
-                            <td>GET</td>
-                            <td>/api/persons/list/</td>
-                            <td>Получение списка всех людей</td>
-                        </tr>
-                        <tr>
-                            <td>GET</td>
+                            <td><span class="badge bg-success">GET</span></td>
                             <td>/api/persons/search/</td>
-                            <td>Поиск в витрине</td>
+                            <td><strong>Витрина поиска</strong> - дедублицированная информация</td>
+                            <td>last_name, first_name, middle_name, address, phone, email, limit, offset</td>
                         </tr>
                         <tr>
-                            <td>GET</td>
+                            <td><span class="badge bg-primary">POST</span></td>
+                            <td>/api/persons/</td>
+                            <td>Создание нового человека с автодедубликацией</td>
+                            <td>JSON: last_name, first_name, birth_date, gender, address, phone?, email?</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge bg-info">GET</span></td>
+                            <td>/api/persons/list/</td>
+                            <td>Получение списка всех текущих людей</td>
+                            <td>Нет</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge bg-warning">GET</span></td>
                             <td>/api/persons/{group_id}/as-of/</td>
-                            <td>Состояние на момент времени</td>
+                            <td>Состояние человека на момент времени</td>
+                            <td>timestamp (ISO 8601)</td>
                         </tr>
                     </tbody>
                 </table>
+            </div>
+            
+            <h4>Примеры поиска в витрине:</h4>
+            <div class="row">
+                <div class="col-md-6">
+                    <pre class="bg-light p-3"><code># Поиск по фамилии
+GET /api/persons/search/?last_name=Иван
+
+# Поиск по фамилии и имени  
+GET /api/persons/search/?last_name=Петров&first_name=Иван
+
+# Поиск по адресу
+GET /api/persons/search/?address=Москва
+
+# Поиск по телефону
+GET /api/persons/search/?phone=89154233426</code></pre>
+                </div>
+                <div class="col-md-6">
+                    <pre class="bg-light p-3"><code># Поиск по email
+GET /api/persons/search/?email=@gmail.com
+
+# Комбинированный поиск
+GET /api/persons/search/?last_name=Петр&address=Москва
+
+# С лимитом результатов
+GET /api/persons/search/?last_name=Иван&limit=10</code></pre>
+                </div>
             </div>
         </div>
     </div>
