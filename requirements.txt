@@ -4,4 +4,4 @@ python-decouple==3.8
 django-cors-headers==4.3.1
 djangorestframework==3.14.0
 requests==2.31.0
-dadata==21.11.0
+dadata==25.10.0
