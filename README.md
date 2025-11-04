@@ -25,12 +25,6 @@ pip install -r requirements.txt
 
 ### 2. Настройка переменных окружения
 
-Скопируйте файл `.env.example` в `.env` и заполните нужные значения:
-
-```bash
-cp .env.example .env
-```
-
 Обязательно настройте:
 - **Переменные базы данных** (DB_NAME, DB_USER, DB_PASSWORD)
 - **API ключи DaData** для автозаполнения адресов:
