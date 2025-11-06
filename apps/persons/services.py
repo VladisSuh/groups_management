@@ -23,10 +23,9 @@ class PersonService:
         - Полное совпадение отчеств (оба NULL или равны)
         - Для мужчин — полное совпадение фамилий
         - Совпадение хотя бы одного контакта: address ИЛИ phone (если указан) ИЛИ email (если указан)
-        Смотрим только по текущим записям.
+        Смотрим по всем записям (все актуальны для своего времени).
         """
         qs = Person.objects.filter(
-            is_current=True,
             gender=person_data['gender'],
             first_name=person_data['first_name'],
         )
@@ -75,18 +74,24 @@ class PersonService:
 
         # Создание новой «текущей» версии человека
         now_ts = timezone.now()
-        person = Person.objects.create(
+        
+        # Создаем объект с валидацией
+        person = Person(
             group=group,
             change=change_set,
             created_at=now_ts,
             is_current=True,
             **person_data
         )
+        
+        # Вызываем валидацию (включая форматирование телефона)
+        person.clean()
+        person.save()
 
-        # Персистентность: закрыть предыдущую «текущую» запись в истории, если была
+        # Персистентность: закрыть предыдущую запись в истории, если была
         prev = (
             Person.objects
-            .filter(group=group, is_current=True)
+            .filter(group=group)
             .exclude(id=person.id)
             .order_by('-created_at')
             .first()
@@ -107,16 +112,16 @@ class PersonService:
                 valid_to=now_ts,
             )
 
-            # помечаем прошлую запись как неактуальную
-            prev.is_current = False
-            prev.save(update_fields=['is_current'])
+            # НЕ помечаем прошлую запись как неактуальную - все записи остаются актуальными
+            # prev.is_current = False
+            # prev.save(update_fields=['is_current'])
 
         return person
 
     @staticmethod
     def search_persons_vitrine(search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Поиск в витрине с частичным совпадением (дедублицированная информация)"""
-        qs = Person.objects.filter(is_current=True)
+        """Поиск в витрине с частичным совпадением (все записи актуальны)"""
+        qs = Person.objects.all()
 
         # Поиск по частичным данным:
         # i. фамилия
@@ -181,11 +186,11 @@ class PersonService:
 
     @staticmethod
     def get_person_as_of(group_id: int, timestamp: timezone.datetime) -> Optional[Dict[str, Any]]:
-        """Получение состояния человека на момент времени (ORM)."""
-        # 1) пробуем взять текущую запись, созданную не позже timestamp
+        """Получение состояния человека на момент времени."""
+        # Ищем самую свежую запись для группы на указанный момент времени
         current = (
             Person.objects
-            .filter(group_id=group_id, is_current=True, created_at__lte=timestamp)
+            .filter(group_id=group_id, created_at__lte=timestamp)
             .order_by('-created_at')
             .first()
         )
@@ -225,8 +230,8 @@ class PersonService:
 
     @staticmethod
     def get_all_current_persons() -> List[Person]:
-        """Получение всех текущих записей людей"""
-        return Person.objects.filter(is_current=True).select_related('group', 'change')
+        """Получить всех людей (все записи актуальны для своего времени)"""
+        return Person.objects.all().select_related('group', 'change').order_by('-created_at')
 
     @staticmethod
     def get_person_history(group_id: int) -> List[PersonHistory]:

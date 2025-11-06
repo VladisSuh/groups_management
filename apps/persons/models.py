@@ -121,11 +121,6 @@ class Person(models.Model):
             self.phone = formatted_phone
             return True
         
-        # Если номер уже в правильном формате
-        phone_pattern = r'^\+7\(\d{3}\)\d{3}-\d{2}-\d{2}$'
-        if re.match(phone_pattern, phone):
-            return True
-        
         # Если не удалось преобразовать, возвращаем False
         return False
 
@@ -135,13 +130,6 @@ class Person(models.Model):
         return bool(re.match(pattern, email))
 
         
-
-    def save(self, *args, **kwargs):
-        """Переопределяем save для форматирования телефона перед сохранением"""
-        # Форматируем телефон перед сохранением
-        if self.phone:
-            self._validate_phone(self.phone)
-        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.last_name} {self.first_name} {self.middle_name or ''}".strip()

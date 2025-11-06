@@ -8,10 +8,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 import json
 
-from .models import Person
+from .models import Person, PersonHistory, ChangeSet
 from .serializers import PersonSerializer, PersonSearchSerializer, PersonVitrineSerializer
 from .services import PersonService
-from .dadata_service import DaDataService
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -164,127 +163,216 @@ def api_person_as_of(request, group_id):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@csrf_exempt
+def api_group_history_simple(request, group_id):
+    """Получить историю изменений группы в простом формате"""
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        # Получаем историю изменений для группы
+        history = PersonHistory.objects.filter(
+            group_id=group_id
+        ).select_related('change').order_by('-valid_from')
+        
+        result = []
+        
+        # Всегда добавляем текущее состояние группы
+        current_members = Person.objects.filter(group_id=group_id)
+        current_member_names = set()
+        
+        for member in current_members:
+            # Формируем полное имя для текущего члена
+            member_name_parts = [member.last_name, member.first_name]
+            if member.middle_name:
+                member_name_parts.append(member.middle_name)
+            member_full_name = " ".join(member_name_parts)
+            current_member_names.add(member_full_name)
+            
+            # Добавляем текущего члена как "действующую" запись
+            from django.utils import timezone
+            result.append({
+                'timestamp': member.change.authored_at.isoformat() if member.change else timezone.now().isoformat(),
+                'author': member.change.author if member.change else 'system',
+                'reason': 'Текущий член группы',
+                'name': member_full_name,
+                'valid_from': member.change.authored_at.isoformat() if member.change else timezone.now().isoformat(),
+                'valid_to': 'текущее время',
+                'is_current': True  # Флаг для отличия от исторических записей
+            })
+        
+        # Добавляем исторические записи только для людей, которых нет в текущем составе
+        for record in history:
+            # Формируем полное имя из компонентов
+            name_parts = [record.last_name, record.first_name]
+            if record.middle_name:
+                name_parts.append(record.middle_name)
+            full_name = " ".join(name_parts)
+            
+            # Добавляем только если этого человека нет в текущем составе
+            if full_name not in current_member_names:
+                result.append({
+                    'timestamp': record.change.authored_at.isoformat() if record.change else record.valid_from.isoformat(),
+                    'author': record.change.author if record.change else 'System',
+                    'reason': record.change.reason if record.change else 'History record',
+                    'name': full_name,
+                    'valid_from': record.valid_from.isoformat(),
+                    'valid_to': record.valid_to.isoformat()
+                })
+
+        # Сортируем результат по времени (новые сначала)
+        result.sort(key=lambda x: x['timestamp'], reverse=True)
+
+        return JsonResponse({
+            'status': 'success',
+            'history': result
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def api_group_at_time(request, group_id):
+    """Получить состояние группы на определенный момент времени"""
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        timestamp_str = request.GET.get('timestamp')
+        if not timestamp_str:
+            return JsonResponse({'error': 'timestamp parameter is required'}, status=400)
+        
+        # Parse ISO timestamp
+        from datetime import datetime
+        from django.utils import timezone as django_timezone
+        timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        
+        # Сначала ищем в истории
+        history_record = PersonHistory.objects.select_related('change').filter(
+            group_id=group_id,
+            valid_from__lte=timestamp,
+            valid_to__gt=timestamp
+        ).first()
+        
+        if history_record:
+            # Найдена историческая запись
+            result = {
+                'group_id': group_id,
+                'timestamp': timestamp_str,
+                'person': {
+                    'last_name': history_record.last_name,
+                    'first_name': history_record.first_name,
+                    'middle_name': history_record.middle_name,
+                    'birth_date': history_record.birth_date.isoformat() if history_record.birth_date else None,
+                    'gender': history_record.gender,
+                    'address': history_record.address,
+                    'phone': history_record.phone,
+                    'email': history_record.email,
+                    'created_at': history_record.valid_from.isoformat() if history_record.valid_from else None
+                },
+                'change_info': {
+                    'timestamp': history_record.change.authored_at.isoformat() if history_record.change else None,
+                    'author': history_record.change.author if history_record.change else None,
+                    'reason': history_record.change.reason if history_record.change else None
+                } if history_record.change else None
+            }
+            
+            return JsonResponse({
+                'status': 'success',
+                'data': result
+            })
+        else:
+            # Не найдено в истории, ищем в текущих записях
+            current_persons = Person.objects.filter(group_id=group_id)
+            if current_persons.exists():
+                # Возвращаем всех текущих участников группы
+                members = []
+                for person in current_persons:
+                    members.append({
+                        'last_name': person.last_name,
+                        'first_name': person.first_name,
+                        'middle_name': person.middle_name,
+                        'birth_date': person.birth_date.isoformat() if person.birth_date else None,
+                        'gender': person.gender,
+                        'address': person.address,
+                        'phone': person.phone,
+                        'email': person.email,
+                        'created_at': person.created_at.isoformat() if person.created_at else None
+                    })
+                
+                return JsonResponse({
+                    'status': 'success',
+                    'group_id': group_id,
+                    'timestamp': timestamp_str,
+                    'members': members,
+                    'is_current': True
+                })
+            else:
+                return JsonResponse({
+                    'status': 'error',
+                    'error': 'No data found for specified timestamp'
+                }, status=404)
+            
+    except ValueError as e:
+        return JsonResponse({'error': f'Invalid timestamp format: {e}'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def api_address_suggestions(request):
+    """API endpoint для получения подсказок адресов (заглушка)"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    
+    try:
+        return JsonResponse({
+            'success': True,
+            'suggestions': []  # Заглушка - пока не реализовано
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def api_clean_address(request):
+    """API endpoint для очистки адреса (заглушка)"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    
+    try:
+        return JsonResponse({
+            'success': True,
+            'result': None  # Заглушка - пока не реализовано
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def api_geocode_address(request):
+    """API endpoint для геокодирования адреса (заглушка)"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    
+    try:
+        return JsonResponse({
+            'success': True,
+            'result': None  # Заглушка - пока не реализовано
+        })
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
 def index_view(request):
     """Главная страница"""
     return render(request, 'persons/index.html')
 
 
 def list_persons_view(request):
-    """Страница со списком людей и поиском в витрине"""
+    """Страница со списком людей"""
     try:
         persons = PersonService.get_all_current_persons()
         return render(request, 'persons/list_persons.html', {'persons': persons})
     except Exception as e:
         return render(request, 'persons/error.html', {'error': str(e)})
-
-
-@api_view(['GET'])
-def api_address_suggestions(request):
-    """API endpoint для получения подсказок адресов через DaData"""
-    query = request.GET.get('query', '').strip()
-    count = int(request.GET.get('count', 5))
-    
-    if not query or len(query) < 3:
-        return Response({
-            'success': False,
-            'error': 'Запрос должен содержать минимум 3 символа'
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        dadata_service = DaDataService()
-        suggestions = dadata_service.suggest_addresses(query, count)
-        
-        return Response({
-            'success': True,
-            'query': query,
-            'count': len(suggestions),
-            'suggestions': suggestions
-        })
-    except ValueError as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-    except Exception as e:
-        return Response({
-            'success': False,
-            'error': f'Ошибка DaData API: {str(e)}'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['POST'])
-def api_clean_address(request):
-    """API endpoint для стандартизации адреса через DaData"""
-    address = request.data.get('address', '').strip()
-    
-    if not address or len(address) < 3:
-        return Response({
-            'success': False,
-            'error': 'Адрес должен содержать минимум 3 символа'
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        dadata_service = DaDataService()
-        cleaned = dadata_service.clean_address(address)
-        
-        if cleaned:
-            return Response({
-                'success': True,
-                'original': address,
-                'cleaned': cleaned
-            })
-        else:
-            return Response({
-                'success': False,
-                'error': 'Не удалось распознать адрес'
-            }, status=status.HTTP_404_NOT_FOUND)
-            
-    except ValueError as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-    except Exception as e:
-        return Response({
-            'success': False,
-            'error': f'Ошибка DaData API: {str(e)}'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@api_view(['GET'])
-def api_geocode_address(request):
-    """API endpoint для получения координат по адресу"""
-    address = request.GET.get('address', '').strip()
-    
-    if not address:
-        return Response({
-            'success': False,
-            'error': 'Необходимо указать адрес'
-        }, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        dadata_service = DaDataService()
-        coords = dadata_service.geolocate_by_address(address)
-        
-        if coords:
-            return Response({
-                'success': True,
-                'address': address,
-                'coordinates': coords
-            })
-        else:
-            return Response({
-                'success': False,
-                'error': 'Не удалось определить координаты для указанного адреса'
-            }, status=status.HTTP_404_NOT_FOUND)
-            
-    except ValueError as e:
-        return Response({
-            'success': False,
-            'error': str(e)
-        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-    except Exception as e:
-        return Response({
-            'success': False,
-            'error': f'Ошибка DaData API: {str(e)}'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

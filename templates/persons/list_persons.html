@@ -5,12 +5,36 @@
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <h2 class="mb-4">🔍 Витрина поиска людей</h2>
+        <h2 class="mb-4"> Витрина поиска людей</h2>
+        
+        <!-- Управление группами и их историей -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"> Управление группами и история изменений</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <button type="button" class="btn btn-outline-info" onclick="showGroupsModal()">
+                            <i class="fas fa-users"></i> Просмотр всех групп
+                        </button>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="input-group">
+                            <input type="number" class="form-control" id="groupIdInput" placeholder="ID группы (например: 1)" min="1">
+                            <button type="button" class="btn btn-outline-success" onclick="showGroupHistoryByIdFromInput()">
+                                <i class="fas fa-search"></i> История группы
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         
         <!-- Форма поиска -->
         <div class="card mb-4">
             <div class="card-header">
-                <h5 class="mb-0">Поиск по критериям (дедублицированные результаты)</h5>
+                <h5 class="mb-0">Поиск</h5>
             </div>
             <div class="card-body">
                 <form id="searchForm" class="row g-3">
@@ -93,11 +117,19 @@
                         <table class="table table-striped table-hover">
                             <thead class="table-dark">
                                 <tr>
-                                    <th>ID</th>
-                                    <th>Группа</th>
-                                    <th>ФИО</th>
+                                    <th style="cursor: pointer;" onclick="sortTable(0)" title="Сортировка по ID">
+                                        ID <i class="fas fa-sort"></i>
+                                    </th>
+                                    <th style="cursor: pointer;" onclick="sortTable(1)" title="Сортировка по группе (дате создания)">
+                                        Группа <i class="fas fa-sort"></i>
+                                    </th>
+                                    <th style="cursor: pointer;" onclick="sortTable(2)" title="Сортировка по фамилии">
+                                        ФИО <i class="fas fa-sort"></i>
+                                    </th>
                                     <th>Пол</th>
-                                    <th>Дата рождения</th>
+                                    <th style="cursor: pointer;" onclick="sortTable(4)" title="Сортировка по дате рождения">
+                                        Дата рождения <i class="fas fa-sort"></i>
+                                    </th>
                                     <th>Адрес</th>
                                     <th>Телефон</th>
                                     <th>Email</th>
@@ -155,6 +187,99 @@
 </div>
 
 <script>
+    // Определяем функции для кнопок действий в начале файла
+    async function showGroupHistoryById(groupId) {
+        try {
+            // Добавляем timestamp для предотвращения кэширования
+            const timestamp = new Date().getTime();
+            const response = await fetch(`/api/groups/${groupId}/history/?t=${timestamp}`);
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                displayGroupHistoryModal(`${groupId}`, data.history, groupId);
+            } else {
+                alert('Ошибка при загрузке истории группы: ' + data.error);
+            }
+        } catch (error) {
+            alert('Ошибка при загрузке истории группы: ' + error.message);
+        }
+    }
+
+    function showGroupAtTimeFormById(groupId) {
+        let html = `
+            <div class="modal fade" id="atTimeModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title"> Состав группы ${groupId} на дату</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label for="timestampInput" class="form-label">Выберите дату и время</label>
+                                <input type="datetime-local" class="form-control" id="timestampInput" required>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                            <button type="button" class="btn btn-primary" onclick="viewGroupAtTimeById(${groupId})">
+                                <i class="fas fa-search"></i> Посмотреть состав
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Удаляем предыдущий модал если есть
+        const existingModal = document.getElementById('atTimeModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Добавляем новый модал
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modal = new bootstrap.Modal(document.getElementById('atTimeModal'));
+        modal.show();
+    }
+
+    async function viewGroupAtTimeById(groupId) {
+        const timestamp = document.getElementById('timestampInput').value;
+        if (!timestamp) {
+            alert('Выберите дату и время');
+            return;
+        }
+        
+        try {
+            const isoTimestamp = new Date(timestamp).toISOString();
+            const response = await fetch(`/api/groups/${groupId}/at-time/?timestamp=${isoTimestamp}`);
+            const data = await response.json();
+            
+            if (data.status === 'success') {
+                // Закрываем форму выбора времени
+                const modal = bootstrap.Modal.getInstance(document.getElementById('atTimeModal'));
+                modal.hide();
+                
+                // Обрабатываем разные форматы ответа
+                let members = [];
+                if (data.members) {
+                    // Текущие участники группы
+                    members = data.members;
+                } else if (data.data && data.data.person) {
+                    // Историческая запись
+                    members = [data.data.person];
+                }
+                
+                // Показываем результат
+                displayGroupAtTimeModal(`${groupId}`, data.timestamp || timestamp, members);
+            } else {
+                alert('Ошибка при загрузке состава группы: ' + data.error);
+            }
+        } catch (error) {
+            alert('Ошибка при загрузке состава группы: ' + error.message);
+        }
+    }
+
     const searchForm = document.getElementById('searchForm');
     const resultsContainer = document.getElementById('resultsContainer');
     const errorDiv = document.getElementById('error');
@@ -222,10 +347,16 @@
                         <table class="table table-striped table-hover">
                             <thead class="table-dark">
                                 <tr>
-                                    <th>Группа</th>
-                                    <th>ФИО</th>
+                                    <th style="cursor: pointer;" onclick="sortSearchTable(0)" title="Сортировка по группе">
+                                        Группа <i class="fas fa-sort"></i>
+                                    </th>
+                                    <th style="cursor: pointer;" onclick="sortSearchTable(1)" title="Сортировка по фамилии">
+                                        ФИО <i class="fas fa-sort"></i>
+                                    </th>
                                     <th>Пол</th>
-                                    <th>Дата рождения</th>
+                                    <th style="cursor: pointer;" onclick="sortSearchTable(3)" title="Сортировка по дате рождения">
+                                        Дата рождения <i class="fas fa-sort"></i>
+                                    </th>
                                     <th>Адрес</th>
                                     <th>Телефон</th>
                                     <th>Email</th>
@@ -364,6 +495,569 @@
 
     function hideSearchSuggestions() {
         searchSuggestionsDiv.classList.add('d-none');
+    }
+
+    // Функции для работы с персистентностью
+    async function showGroupsModal() {
+        try {
+            const response = await fetch('/api/persistency/groups/');
+            const data = await response.json();
+            
+            if (data.success) {
+                displayGroupsModal(data.groups);
+            } else {
+                alert('Ошибка при загрузке групп: ' + data.error);
+            }
+        } catch (error) {
+            alert('Ошибка при загрузке групп: ' + error.message);
+        }
+    }
+
+    function displayGroupsModal(groups) {
+        let html = `
+            <div class="modal fade" id="groupsModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">📋 Все группы в системе</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Участников</th>
+                                            <th>Создана</th>
+                                            <th>Действия</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+        `;
+        
+        groups.forEach(group => {
+            html += `
+                <tr>
+                    <td><strong>${group.name}</strong></td>
+                    <td><span class="badge bg-primary">${group.member_count}</span></td>
+                    <td>${new Date(group.created_at).toLocaleString()}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-info" onclick="showGroupHistoryById(${group.id})">
+                            <i class="fas fa-history"></i> История
+                        </button>
+                    </td>
+                </tr>
+            `;
+        });
+        
+        html += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Удаляем предыдущий модал если есть
+        const existingModal = document.getElementById('groupsModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Добавляем новый модал
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modal = new bootstrap.Modal(document.getElementById('groupsModal'));
+        modal.show();
+    }
+
+    // Функции для работы с историей изменений удалены
+    // async function showChangesetsModal() { ... }
+    // function displayChangesetsModal(changesets) { ... }
+    // async function viewChangesetDetails(changesetId) { ... }
+    // function displayChangesetDetailsModal(details) { ... }
+
+    async function showGroupHistoryModal() {
+        const groupName = document.getElementById('groupNameInput').value.trim();
+        if (!groupName) {
+            alert('Введите название группы');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/persistency/groups/${encodeURIComponent(groupName)}/history/`);
+            const data = await response.json();
+            
+            if (data.success) {
+                displayGroupHistoryModal(data.group_name, data.history);
+            } else {
+                alert('Ошибка при загрузке истории группы: ' + data.error);
+            }
+        } catch (error) {
+            alert('Ошибка при загрузке истории группы: ' + error.message);
+        }
+    }
+
+    function displayGroupHistoryModal(groupName, history, groupId = null) {
+        let html = `
+            <div class="modal fade" id="groupHistoryModal" tabindex="-1">
+                <div class="modal-dialog modal-xl">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title"> История группы ${groupName}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+        `;
+        
+        if (history.length === 0) {
+            html += `<div class="alert alert-info">История для группы ${groupName} пуста.</div>`;
+        } else {
+            html += `
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Время добавления</th>
+                                <th>Человек</th>
+                                <th>Период действия</th>
+                                <th>Описание</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            history.forEach(record => {
+                // Форматируем время окончания действия
+                const validToDisplay = record.valid_to === 'текущее время' 
+                    ? 'по настоящее время' 
+                    : `до ${new Date(record.valid_to).toLocaleString()}`;
+                
+                html += `
+                    <tr>
+                        <td>${new Date(record.timestamp).toLocaleString()}</td>
+                        <td><strong>${record.name}</strong></td>
+                        <td>
+                            <small class="text-muted">с ${new Date(record.valid_from).toLocaleString()}<br>${validToDisplay}</small>
+                        </td>
+                        <td>${record.reason || 'Без описания'}</td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+        
+        html += `
+                        </div>
+                        <div class="modal-footer">`;
+        
+        if (groupId) {
+            html += `<button type="button" class="btn btn-outline-info" onclick="showGroupAtTimeFormById(${groupId})">
+                        <i class="fas fa-clock"></i> Посмотреть состав на дату
+                     </button>`;
+        } else {
+            html += `<button type="button" class="btn btn-outline-info" onclick="showGroupAtTimeForm('${groupName}')">
+                        <i class="fas fa-clock"></i> Посмотреть состав на дату
+                     </button>`;
+        }
+        
+        html += `
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Удаляем предыдущий модал если есть
+        const existingModal = document.getElementById('groupHistoryModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Добавляем новый модал
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modal = new bootstrap.Modal(document.getElementById('groupHistoryModal'));
+        modal.show();
+    }
+
+    function showGroupAtTimeForm(groupName) {
+        const html = `
+            <div class="modal fade" id="groupAtTimeModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title"> Состав группы "${groupName}" на дату</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label for="timestampInput" class="form-label">Выберите дату и время</label>
+                                <input type="datetime-local" class="form-control" id="timestampInput">
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-primary" onclick="viewGroupAtTime('${groupName}')">
+                                Показать состав
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Удаляем предыдущий модал если есть
+        const existingModal = document.getElementById('groupAtTimeModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Добавляем новый модал
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modal = new bootstrap.Modal(document.getElementById('groupAtTimeModal'));
+        modal.show();
+        
+        // Устанавливаем текущую дату и время по умолчанию
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        document.getElementById('timestampInput').value = now.toISOString().slice(0,16);
+    }
+
+    async function viewGroupAtTime(groupName) {
+        const timestamp = document.getElementById('timestampInput').value;
+        if (!timestamp) {
+            alert('Выберите дату и время');
+            return;
+        }
+        
+        try {
+            const isoTimestamp = new Date(timestamp).toISOString();
+            const response = await fetch(`/api/persistency/groups/${encodeURIComponent(groupName)}/at-time/?timestamp=${isoTimestamp}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                displayGroupAtTimeModal(data.group_name, data.timestamp, data.members);
+            } else {
+                alert('Ошибка при загрузке состава группы: ' + data.error);
+            }
+        } catch (error) {
+            alert('Ошибка при загрузке состава группы: ' + error.message);
+        }
+    }
+
+    function displayGroupAtTimeModal(groupName, timestamp, members) {
+        const formattedTime = new Date(timestamp).toLocaleString();
+        
+        let html = `
+            <div class="modal fade" id="groupCompositionModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title"> Состав группы ${groupName} на ${formattedTime}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+        `;
+        
+        if (members.length === 0) {
+            html += `<div class="alert alert-info">На указанное время группа ${groupName} была пуста.</div>`;
+        } else {
+            html += `
+                <div class="alert alert-success">
+                    В группе ${groupName} на ${formattedTime} было <strong>${members.length}</strong> участников:
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>ФИО</th>
+                                <th>Дата рождения</th>
+                                <th>Пол</th>
+                                <th>Дата добавления</th>
+                                <th>Телефон</th>
+                                <th>Email</th>
+                                <th>Адрес</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            members.forEach(member => {
+                // Формируем полное имя из компонентов
+                const nameParts = [member.last_name, member.first_name];
+                if (member.middle_name) {
+                    nameParts.push(member.middle_name);
+                }
+                const fullName = nameParts.join(' ');
+                
+                // Форматируем дату рождения
+                const birthDate = member.birth_date ? new Date(member.birth_date).toLocaleDateString() : '-';
+                const gender = member.gender === 'М' ? 'Мужской' : member.gender === 'Ж' ? 'Женский' : '-';
+                
+                // Форматируем дату добавления с временем
+                const addedDate = member.created_at ? new Date(member.created_at).toLocaleString() : '-';
+                
+                html += `
+                    <tr>
+                        <td><strong>${fullName}</strong></td>
+                        <td>${birthDate}</td>
+                        <td>${gender}</td>
+                        <td>${addedDate}</td>
+                        <td>${member.phone || '-'}</td>
+                        <td>${member.email || '-'}</td>
+                        <td>${member.address || '-'}</td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+        
+        html += `
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Удаляем предыдущий модал если есть
+        const existingModal = document.getElementById('groupCompositionModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Добавляем новый модал
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modal = new bootstrap.Modal(document.getElementById('groupCompositionModal'));
+        modal.show();
+    }
+
+    // Функция больше не используется, так как кнопки используют showGroupHistoryById
+    // async function viewGroupHistory(groupName) {
+    //     document.getElementById('groupIdInput').value = groupName;
+    //     await showGroupHistoryModal();
+    // }
+
+    // Функция больше не используется, так как убрали кнопку "Детали"
+    // async function viewChangesetDetails(changesetId) {
+    //     ...
+    // }
+
+    function displayChangesetDetailsModal(details) {
+        const formattedTime = new Date(details.changeset.timestamp).toLocaleString();
+        
+        let html = `
+            <div class="modal fade" id="changesetDetailsModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">🔍 Детали изменения</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <strong>Время:</strong> ${formattedTime}
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Автор:</strong> <span class="badge bg-secondary">${details.changeset.author}</span>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <strong>Описание:</strong> ${details.changeset.description || 'Без описания'}
+                            </div>
+        `;
+        
+        if (details.changes.length === 0) {
+            html += `<div class="alert alert-info">В этом changeset нет изменений.</div>`;
+        } else {
+            html += `
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Действие</th>
+                                <th>Человек</th>
+                                <th>Группа</th>
+                                <th>Время</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            details.changes.forEach(change => {
+                const actionBadge = change.action === 'add' ? 
+                    '<span class="badge bg-success">Добавлен</span>' : 
+                    '<span class="badge bg-danger">Удален</span>';
+                
+                html += `
+                    <tr>
+                        <td>${actionBadge}</td>
+                        <td>
+                            <strong>${change.person.full_name}</strong><br>
+                            <small class="text-muted">${change.person.phone}</small>
+                        </td>
+                        <td><span class="badge bg-primary">${change.group}</span></td>
+                        <td>${new Date(change.timestamp).toLocaleString()}</td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+        
+        html += `
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Удаляем предыдущий модал если есть
+        const existingModal = document.getElementById('changesetDetailsModal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Добавляем новый модал
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modal = new bootstrap.Modal(document.getElementById('changesetDetailsModal'));
+        modal.show();
+    }
+
+    async function showGroupHistoryByIdFromInput() {
+        const groupId = document.getElementById('groupIdInput').value.trim();
+        if (!groupId) {
+            alert('Введите ID группы');
+            return;
+        }
+        
+        if (isNaN(groupId) || parseInt(groupId) < 1) {
+            alert('ID группы должен быть положительным числом');
+            return;
+        }
+        
+        await showGroupHistoryById(parseInt(groupId));
+    }
+
+    // Функции сортировки таблиц
+    let sortDirection = {}; // Храним направление сортировки для каждой колонки
+    
+    function sortTable(columnIndex) {
+        const table = document.querySelector('#resultsContainer table tbody');
+        if (!table) return;
+        
+        const rows = Array.from(table.rows);
+        const isAscending = !sortDirection[columnIndex];
+        sortDirection[columnIndex] = isAscending;
+        
+        rows.sort((a, b) => {
+            let aVal = a.cells[columnIndex].textContent.trim();
+            let bVal = b.cells[columnIndex].textContent.trim();
+            
+            // Обработка разных типов данных
+            if (columnIndex === 0) { // ID - числовая сортировка
+                aVal = parseInt(aVal);
+                bVal = parseInt(bVal);
+            } else if (columnIndex === 1) { // Группа - числовая сортировка
+                aVal = parseInt(aVal);
+                bVal = parseInt(bVal);
+            } else if (columnIndex === 4) { // Дата рождения - сортировка по дате
+                aVal = new Date(aVal.split('.').reverse().join('-'));
+                bVal = new Date(bVal.split('.').reverse().join('-'));
+            } else if (columnIndex === 2) { // ФИО - текстовая сортировка
+                aVal = aVal.toLowerCase();
+                bVal = bVal.toLowerCase();
+            }
+            
+            if (aVal < bVal) return isAscending ? -1 : 1;
+            if (aVal > bVal) return isAscending ? 1 : -1;
+            return 0;
+        });
+        
+        // Перестраиваем таблицу
+        rows.forEach(row => table.appendChild(row));
+        
+        // Обновляем иконки сортировки
+        updateSortIcons(columnIndex, isAscending);
+    }
+    
+    function sortSearchTable(columnIndex) {
+        const table = document.querySelector('#resultsContainer .table-responsive table tbody');
+        if (!table) return;
+        
+        const rows = Array.from(table.rows);
+        const isAscending = !sortDirection['search_' + columnIndex];
+        sortDirection['search_' + columnIndex] = isAscending;
+        
+        rows.sort((a, b) => {
+            let aVal = a.cells[columnIndex].textContent.trim();
+            let bVal = b.cells[columnIndex].textContent.trim();
+            
+            // Обработка разных типов данных для результатов поиска
+            if (columnIndex === 0) { // Группа - числовая сортировка
+                aVal = parseInt(aVal);
+                bVal = parseInt(bVal);
+            } else if (columnIndex === 3) { // Дата рождения - сортировка по дате
+                aVal = new Date(aVal);
+                bVal = new Date(bVal);
+            } else if (columnIndex === 1) { // ФИО - текстовая сортировка
+                aVal = aVal.toLowerCase();
+                bVal = bVal.toLowerCase();
+            }
+            
+            if (aVal < bVal) return isAscending ? -1 : 1;
+            if (aVal > bVal) return isAscending ? 1 : -1;
+            return 0;
+        });
+        
+        // Перестраиваем таблицу
+        rows.forEach(row => table.appendChild(row));
+        
+        // Обновляем иконки сортировки для результатов поиска
+        updateSearchSortIcons(columnIndex, isAscending);
+    }
+    
+    function updateSortIcons(activeColumn, isAscending) {
+        const headers = document.querySelectorAll('#resultsContainer table thead th');
+        headers.forEach((header, index) => {
+            const icon = header.querySelector('i');
+            if (icon) {
+                if (index === activeColumn) {
+                    icon.className = isAscending ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                } else {
+                    icon.className = 'fas fa-sort';
+                }
+            }
+        });
+    }
+    
+    function updateSearchSortIcons(activeColumn, isAscending) {
+        const headers = document.querySelectorAll('#resultsContainer .table-responsive table thead th');
+        headers.forEach((header, index) => {
+            const icon = header.querySelector('i');
+            if (icon) {
+                if (index === activeColumn) {
+                    icon.className = isAscending ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                } else {
+                    icon.className = 'fas fa-sort';
+                }
+            }
+        });
     }
 </script>
 {% endblock %}
